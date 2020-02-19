@@ -181,11 +181,12 @@ void IntroShowParam(void) {
     printf("   Commandline options:\n");
     printf("   ./ecpiww -f /home/user/ecdata -p 0 -m S\n");
     printf("   -f <dir>           : save readings to <dir>/<wM-Bus Ident>.dat\n");
-    printf("   -l VZ              : log to (VZ)Volkszaehler, (XML) XMLFile, (CSV) CSV File \n");
+    printf("   -l VZ              : log to (VZ)Volkszaehler, (XML) XML-File, (CSV) CSV-File, (DAT) DAT-File \n");
     printf("   -p 0               : Portnumber 0 -> /dev/ttyUSB0     (as alternativ to -d)\n");
     printf("   -d </path/to/dev>  : e.g. /dev/tty.usbserial-27019A35 (as alternativ to -p)\n");
     printf("   -m S               : S2 mode \n");
     printf("   -i                 : show detailed infos \n\n");
+    printf("   -q                 : quiet mode, do not change terminal (to be started as service) \n\n");
 }
 
 void ErrorAndExit(const char *info) {
@@ -359,54 +360,61 @@ int Log2File(char *DataPath, uint16_t mode, uint16_t meterindex, uint16_t infofl
     time_t t;
     struct tm curtime;
 
-    switch(mode) {
-        case LOGTOCSV : if (strlen(DataPath) == 0) {
-                            sprintf(param, "/var/www/ecpiww/data/ecpiwwM%d.csv", meterindex+1);
-                        } else {
-                            sprintf(param, "%s/ecpiwwM%d.csv", DataPath, meterindex+1);
-                        }
-                        Log2CSVFile(param, metervalue); //log kWh
-                        return APIOK;
-                        break;
-        case LOGTOXML : if (strlen(DataPath) == 0) {
-                            getcwd(param, sizeof(param));
-                            sprintf(param, "%s/%08X.xml", param, ident);
-                        } else {
-                            sprintf(param, "%s/%08X.xml", DataPath, ident);
-                        }
-                        Log2XMLFile(param, metervalue, rfData); //log kWh
-                        return APIOK;
-                        break;
-        case LOGTOVZ :  if( access( "add2vz.sh", F_OK ) != -1 ) {
-                            memset(param, '\0', sizeof(FILENAME_MAX));
-                            sprintf(param, "./add2vz.sh %d %ld ", meterindex+1, (long int)(metervalue*1000));
-                            int ret=system(param);
-                            t = time(NULL);
-                            curtime = *localtime(&t);
-
-                            if(0x100 == ret) {
-                                if(infoflag > SILENTMODE) printf("%02d:%02d Calling %s \n", curtime.tm_hour, curtime.tm_min, param);
-                            } else {
-                                if(infoflag > SILENTMODE) printf("%02d:%02d Calling %s returned with 0x%X\n", curtime.tm_hour, curtime.tm_min, param, ret);
-                            }
-                        }
-                        return APIOK;
-                        break;
-        case LOGTODAT:
-                        if (strlen(DataPath) == 0)  {
-                            getcwd(param, sizeof(param));
-                            sprintf(datFile, "%s/%08X.dat", param, ident);
-                        } else {
-                            sprintf(datFile, "%s/%08X.dat", DataPath, ident);
-                        }
-                        if ((hDatFile = fopen(datFile, "wb")) != NULL) {
-                            fprintf(hDatFile, "%.1f\n",  metervalue);
-                            fclose(hDatFile);
-                        }
-                        return APIOK;
-                        break;
+    if (mode & LOGTOCSV) {
+        if (strlen(DataPath) == 0) {
+            sprintf(param, "/var/www/ecpiww/data/ecpiwwM%d.csv", meterindex+1);
+        } else {
+            sprintf(param, "%s/ecpiwwM%d.csv", DataPath, meterindex+1);
+        }
+        Log2CSVFile(param, metervalue); //log kWh
     }
-    return APIERROR;
+
+    if (mode & LOGTOXML) {
+        if (strlen(DataPath) == 0) {
+            getcwd(param, sizeof(param));
+            sprintf(param, "%s/%08X.xml", param, ident);
+        } else {
+            sprintf(param, "%s/%08X.xml", DataPath, ident);
+        }
+        Log2XMLFile(param, metervalue, rfData); //log kWh
+    }
+
+    if (mode & LOGTOVZ) {
+        if( access( "add2vz.sh", F_OK ) != -1 ) {
+            memset(param, '\0', sizeof(FILENAME_MAX));
+            sprintf(param, "./add2vz.sh %d %ld ", meterindex+1, (long int)(metervalue));
+            int ret=system(param);
+            t = time(NULL);
+            curtime = *localtime(&t);
+
+            if (0x100 == ret) {
+               if(infoflag > SILENTMODE) printf("%02d:%02d Calling %s \n", curtime.tm_hour, curtime.tm_min, param);
+            } else {
+               if(infoflag > SILENTMODE) printf("%02d:%02d Calling %s returned with 0x%X\n", curtime.tm_hour, curtime.tm_min, param, ret);
+            }
+        }
+     }
+
+     if (mode & LOGTODAT) {
+         if (strlen(DataPath) == 0)  {
+             getcwd(param, sizeof(param));
+             sprintf(datFile, "%s/%08X.dat", param, ident);
+         } else {
+             sprintf(datFile, "%s/%08X.dat", DataPath, ident);
+         }
+         if ((hDatFile = fopen(datFile, "wb")) != NULL) {
+             fprintf(hDatFile, "%.1f\n",  metervalue);
+             fclose(hDatFile);
+         }
+    }
+
+    if (mode & LOGNONE && infoflag > SILENTMODE) {
+        t = time(NULL);
+        curtime = *localtime(&t);
+        printf("%02d:%02d meter %d reported %.1f\n", curtime.tm_hour, curtime.tm_min, meterindex + 1, (double)metervalue);
+    }
+
+    return APIOK;
 }
 
 //support commandline
@@ -415,8 +423,9 @@ int parseparam(int argc, char *argv[], char *filepath, uint16_t *infoflag, uint1
 
     if((NULL == LogMode) || (NULL == infoflag) || (NULL == Port)  || (NULL == Mode) ) return 0;
 
+    *LogMode = LOGNONE;
     opterr = 0;
-    while ((c = getopt (argc, argv, "f:hil:m:p:d:x")) != -1) {
+    while ((c = getopt (argc, argv, "f:hil:m:p:d:xq")) != -1) {
         switch (c) {
             case 'f':
                 if (NULL != optarg) {
@@ -426,11 +435,15 @@ int parseparam(int argc, char *argv[], char *filepath, uint16_t *infoflag, uint1
             case 'i':
                 *infoflag = SHOWDETAILS;
                 break;
+            case 'q':
+                *infoflag = NOTERMINAL;
+                break;
             case 'l':
                 if (NULL != optarg) {
-                    if(0 == strcmp("VZ",  optarg)) *LogMode=LOGTOVZ;
-                    if(0 == strcmp("XML", optarg)) *LogMode=LOGTOXML;
-                    if(0 == strcmp("DAT", optarg)) *LogMode=LOGTODAT;
+                    if(0 == strcmp("CSV", optarg)) *LogMode |= LOGTOCSV;
+                    if(0 == strcmp("VZ",  optarg)) *LogMode |= LOGTOVZ;
+                    if(0 == strcmp("XML", optarg)) *LogMode |= LOGTOXML;
+                    if(0 == strcmp("DAT", optarg)) *LogMode |= LOGTODAT;
                 }
                 break;
             case 'p':
@@ -491,7 +504,6 @@ int main(int argc, char *argv[]) {
     char     comDeviceName[100];
     int      hStick;
 
-    setupConsole();
 
     ecwMBUSMeter ecpiwwMeter[MAXMETER];
     memset(ecpiwwMeter, 0, MAXMETER*sizeof(ecwMBUSMeter));
@@ -507,7 +519,10 @@ int main(int argc, char *argv[]) {
         fclose(hDatFile);
     }
 
-    Intro();
+    if (InfoFlag != NOTERMINAL) {
+        setupConsole();
+        Intro();
+    }
 
     //open wM-Bus Stick #1
     wMBUSStick = iM871AIdentifier;

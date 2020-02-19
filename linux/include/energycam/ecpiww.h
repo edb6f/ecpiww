@@ -24,16 +24,18 @@
 #define YSIZE      80
 
 //Logging modes
-#define LOGTOCSV 0
-#define LOGTOVZ  1
-#define LOGTOXML 2
-#define LOGTODAT 3
+#define LOGNONE  0x0
+#define LOGTOCSV 0x1
+#define LOGTOVZ  0x2
+#define LOGTOXML 0x4
+#define LOGTODAT 0x8
 
 
 //show Information
-#define SILENTMODE     0
-#define SHOWDETAILS    1
-#define SHOWALLDETAILS 2
+#define NOTERMINAL     0
+#define SILENTMODE     1
+#define SHOWDETAILS    2
+#define SHOWALLDETAILS 3
 
 //colorcoding
 #define PRINTF_BRIGHT  1
